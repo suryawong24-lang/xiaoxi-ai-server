@@ -1,41 +1,44 @@
 import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import google.generativeai as genai
 
-# 1. Inisialisasi FastAPI
 app = FastAPI()
 
-# 2. Konfigurasi API Key Gemini Anda (Gratis)
-# Masukkan API Key Anda di dalam tanda kutip di bawah ini
+# Konfigurasi API Key Gemini Gratisan Anda
 GEMINI_API_KEY = "MASUKKAN_API_KEY_GEMINI_ANDA_DISINI"
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Format data yang dikirim oleh ESP32 (Teks/Prompt)
-class ChatRequest(BaseModel):
-    message: str
-
 @app.get("/")
 def home():
-    return {"status": "Server Aktif", "info": "Server AI untuk ESP32"}
+    return {"status": "Server Aktif", "info": "Server WebSocket AI untuk Xiaoxi Robot"}
 
-# End Point untuk menerima teks dari ESP32 dan menembak ke Gemini AI
-@app.post("/chat")
-async def chat_with_ai(request: ChatRequest):
-    try:
-        # Menggunakan model Gemini paling stabil
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        
-        # Kirim teks dari ESP32 ke Gemini
-        response = model.generate_content(request.message)
-        
-        # Kembalikan jawaban teks ke ESP32
-        return {"response": response.text}
+# Endpoint WebSocket disesuaikan dengan ESP32 Anda: /api/v1/ws/chat
+@app.websocket("/api/v1/ws/chat")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print("Robot Xiaoxi Terhubung via WebSocket!")
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Untuk menjalankan server di laptop (lokal) saat pengetesan
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    try:
+        while True:
+            # Menerima data rekaman audio biner mentah dari ESP32
+            audio_bytes = await websocket.receive_bytes()
+            print(f"Menerima data suara sebesar {len(audio_bytes)} bytes dari robot.")
+            
+            try:
+                # Memanggil Gemini AI menggunakan model gratisan paling stabil
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                
+                # Pengkondisian awal: Karena data biner audio dari mic ESP32 butuh proses transkrip terpisah, 
+                # Sementara kita trigger teks dulu untuk memastikan jalur komunikasi Railway <-> ESP32 tembus.
+                prompt = "Halo Gemini, saya menerima data biner audio dari ESP32 Xiaoxi Robot. Berikan respon sapaan robot yang lucu dan singkat!"
+                response = model.generate_content(prompt)
+                
+                # Kirim balik teks jawaban ke ESP32 via WebSocket
+                await websocket.send_text(response.text)
+                print(f"Respon dikirim ke robot: {response.text}")
+                
+            except Exception as e:
+                await websocket.send_text(f"Error AI: {str(e)}")
+                
+    except WebSocketDisconnect:
+        print("Robot Xiaoxi Terputus dari WebSocket.")
